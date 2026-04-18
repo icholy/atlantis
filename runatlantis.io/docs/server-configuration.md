@@ -1471,6 +1471,16 @@ ATLANTIS_TFE_TOKEN='xxx.atlasv1.yyy'
 
 A token for Terraform Cloud/Terraform Enterprise integration. See [Terraform Cloud](terraform-cloud.md) for more details.
 
+### `--use-git-clone-cache`
+
+```bash
+atlantis server --use-git-clone-cache
+# or
+ATLANTIS_USE_GIT_CLONE_CACHE=true
+```
+
+`--use-git-clone-cache` will maintain a bare mirror of each base repo under the Atlantis data directory and pass it as `--reference` to `git clone`, so only objects missing from the cache need to be fetched over the network. Defaults to `false`.
+
 ### `--use-tf-plugin-cache` <Badge text="v0.26.0+" type="info"/>
 
 ```bash

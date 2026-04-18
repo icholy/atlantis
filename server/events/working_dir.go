@@ -94,6 +94,9 @@ type FileWorkspace struct {
 	GpgNoSigningEnabled bool
 	// flag indicating if we have to merge with potential new changes upstream (directly after grabbing project lock)
 	CheckForUpstreamChanges bool
+	// UseGitCloneCache maintains a bare mirror per base repo and passes it as --reference
+	// to git clone, so only missing objects are fetched over the network.
+	UseGitCloneCache bool
 }
 
 // Clone git clones headRepo, checks out the branch and then returns the absolute
@@ -117,7 +120,17 @@ func (w *FileWorkspace) Clone(logger logging.SimpleLogging, headRepo models.Repo
 	if err != nil {
 		logger.Err("An error occurred attempting to reuse the clone dir, falling back to forced clone. This is likely a bug please report: %v", err)
 	}
-	return cloneDir, w.forceClone(logger, c)
+
+	var cacheDir string
+	if w.UseGitCloneCache {
+		var err error
+		cacheDir, err = w.updateCloneCache(logger, p)
+		if err != nil {
+			logger.Warn("failed to update clone cache, proceeding without reference: %v", err)
+		}
+	}
+
+	return cloneDir, w.forceClone(logger, c, cacheDir)
 }
 
 // attemptReuseCloneDir tries to reuse an existing cloneDir.
@@ -450,7 +463,7 @@ func (w *FileWorkspace) isBranchAtTargetRef(logger logging.SimpleLogging, c wrap
 	return strings.HasPrefix(currCommit, targetRef), nil
 }
 
-func (w *FileWorkspace) forceClone(logger logging.SimpleLogging, c wrappedGitContext) error {
+func (w *FileWorkspace) forceClone(logger logging.SimpleLogging, c wrappedGitContext, cacheDir string) error {
 	err := os.RemoveAll(c.dir)
 	if err != nil {
 		return fmt.Errorf("deleting dir '%s' before cloning: %w", c.dir, err)
@@ -474,20 +487,25 @@ func (w *FileWorkspace) forceClone(logger logging.SimpleLogging, c wrappedGitCon
 
 	// if branch strategy, use depth=1
 	if !w.CheckoutMerge {
-		return w.wrappedGit(logger, c, "clone", "--depth=1", "--branch", c.pr.HeadBranch, "--single-branch", headCloneURL, c.dir)
+		cloneArgs := []string{"clone", "--depth=1", "--branch", c.pr.HeadBranch, "--single-branch"}
+		if cacheDir != "" {
+			cloneArgs = append(cloneArgs, "--reference", cacheDir)
+		}
+		cloneArgs = append(cloneArgs, headCloneURL, c.dir)
+		return w.wrappedGit(logger, c, cloneArgs...)
 	}
 
 	// if merge strategy...
-
-	// if no checkout depth, omit depth arg
-	if w.CheckoutDepth == 0 {
-		if err := w.wrappedGit(logger, c, "clone", "--branch", c.pr.BaseBranch, "--single-branch", baseCloneURL, c.dir); err != nil {
-			return err
-		}
-	} else {
-		if err := w.wrappedGit(logger, c, "clone", "--depth", fmt.Sprint(w.CheckoutDepth), "--branch", c.pr.BaseBranch, "--single-branch", baseCloneURL, c.dir); err != nil {
-			return err
-		}
+	cloneArgs := []string{"clone", "--branch", c.pr.BaseBranch, "--single-branch"}
+	if w.CheckoutDepth != 0 {
+		cloneArgs = append(cloneArgs, "--depth", fmt.Sprint(w.CheckoutDepth))
+	}
+	if cacheDir != "" {
+		cloneArgs = append(cloneArgs, "--reference", cacheDir)
+	}
+	cloneArgs = append(cloneArgs, baseCloneURL, c.dir)
+	if err := w.wrappedGit(logger, c, cloneArgs...); err != nil {
+		return err
 	}
 
 	if err := w.wrappedGit(logger, c, "remote", "add", prSourceRemote, headCloneURL); err != nil {
@@ -702,4 +720,43 @@ func (w *FileWorkspace) gitRefLock(workspaceDir string) func() {
 	mu := value.(*sync.Mutex)
 	mu.Lock()
 	return func() { mu.Unlock() }
+}
+
+// updateCloneCache creates or fetches a bare clone of the repo's base branch,
+// used as a --reference for cloning. It is safe to call concurrently; a per-cache-dir lock serializes access.
+func (w *FileWorkspace) updateCloneCache(logger logging.SimpleLogging, p models.PullRequest) (string, error) {
+	repo := p.BaseRepo
+	if w.TestingOverrideBaseCloneURL != "" {
+		repo.CloneURL = w.TestingOverrideBaseCloneURL
+		repo.SanitizedCloneURL = w.TestingOverrideBaseCloneURL
+	}
+
+	cacheDir := filepath.Join(w.DataDir, "cache", repo.FullName+".git")
+	unlock := w.gitWriteLock(cacheDir)
+	defer unlock()
+
+	if _, err := os.Stat(cacheDir); err != nil {
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("checking clone cache: %w", err)
+		}
+		logger.Info("creating clone cache at %s", cacheDir)
+		if err := os.MkdirAll(filepath.Dir(cacheDir), 0700); err != nil {
+			return "", fmt.Errorf("creating clone cache parent dir: %w", err)
+		}
+		c := wrappedGitContext{dir: filepath.Dir(cacheDir), head: repo, pr: p}
+		if err := w.wrappedGit(logger, c, "clone", "--bare", "--branch", p.BaseBranch, "--single-branch", repo.CloneURL, cacheDir); err != nil {
+			return "", err
+		}
+		return cacheDir, nil
+	}
+
+	logger.Info("updating clone cache at %s", cacheDir)
+	c := wrappedGitContext{dir: cacheDir, head: repo, pr: p}
+	if err := w.wrappedGit(logger, c, "remote", "set-url", "origin", repo.CloneURL); err != nil {
+		return "", err
+	}
+	if err := w.wrappedGit(logger, c, "fetch", "--prune", "origin", p.BaseBranch); err != nil {
+		return "", err
+	}
+	return cacheDir, nil
 }

@@ -157,6 +157,7 @@ const (
 	TFEHostnameFlag                  = "tfe-hostname"
 	TFELocalExecutionModeFlag        = "tfe-local-execution-mode"
 	TFETokenFlag                     = "tfe-token"
+	UseGitCloneCacheFlag             = "use-git-clone-cache"
 	WriteGitCredsFlag                = "write-git-creds" // nolint: gosec
 	WebhookHttpHeaders               = "webhook-http-headers"
 	WebBasicAuthFlag                 = "web-basic-auth"
@@ -624,6 +625,10 @@ var boolFlags = map[string]boolFlag{
 	},
 	SkipCloneNoChanges: {
 		description:  "Skips cloning the PR repo if there are no projects were changed in the PR.",
+		defaultValue: false,
+	},
+	UseGitCloneCacheFlag: {
+		description:  "Maintain a bare mirror of each base repo and pass it as --reference to git clone, reducing network transfer for new workspaces.",
 		defaultValue: false,
 	},
 	TFDownloadFlag: {

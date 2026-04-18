@@ -526,6 +526,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		CheckoutMerge:    userConfig.CheckoutStrategy == "merge",
 		CheckoutDepth:    userConfig.CheckoutDepth,
 		GithubAppEnabled: githubAppEnabled,
+		UseGitCloneCache: userConfig.UseGitCloneCache,
 	}
 
 	scheduledExecutorService := scheduled.NewExecutorService(

@@ -151,6 +151,7 @@ var testFlags = map[string]any{
 	TFEHostnameFlag:                  "my-hostname",
 	TFELocalExecutionModeFlag:        true,
 	TFETokenFlag:                     "my-token",
+	UseGitCloneCacheFlag:             false,
 	UseTFPluginCache:                 true,
 	VarFileAllowlistFlag:             "/path",
 	VCSStatusName:                    "my-status",

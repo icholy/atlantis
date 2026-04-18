@@ -1866,6 +1866,73 @@ func TestHasDiverged_PatternMatching(t *testing.T) {
 	}
 }
 
+func TestClone_WithGitCloneCache_CreatesCacheDir(t *testing.T) {
+	repoDir := initRepo(t)
+	dataDir := t.TempDir()
+	logger := logging.NewNoopLogger(t)
+
+	localURL := fmt.Sprintf("file://%s", repoDir)
+	wd := &events.FileWorkspace{
+		DataDir:                     dataDir,
+		CheckoutMerge:               false,
+		TestingOverrideHeadCloneURL: localURL,
+		TestingOverrideBaseCloneURL: localURL,
+		GpgNoSigningEnabled:         true,
+		UseGitCloneCache:            true,
+	}
+
+	baseRepo := models.Repo{FullName: "owner/repo"}
+	_, err := wd.Clone(logger, models.Repo{}, models.PullRequest{
+		BaseRepo:   baseRepo,
+		HeadBranch: "branch",
+		BaseBranch: "main",
+	}, "default")
+	Ok(t, err)
+
+	cacheDir := filepath.Join(dataDir, "cache", "owner", "repo.git")
+	_, err = os.Stat(filepath.Join(cacheDir, "HEAD"))
+	Ok(t, err)
+}
+
+func TestClone_WithGitCloneCache_UpdatesCache(t *testing.T) {
+	repoDir := initRepo(t)
+	dataDir := t.TempDir()
+	logger := logging.NewNoopLogger(t)
+
+	localURL := fmt.Sprintf("file://%s", repoDir)
+	wd := &events.FileWorkspace{
+		DataDir:                     dataDir,
+		CheckoutMerge:               false,
+		TestingOverrideHeadCloneURL: localURL,
+		TestingOverrideBaseCloneURL: localURL,
+		GpgNoSigningEnabled:         true,
+		UseGitCloneCache:            true,
+	}
+
+	baseRepo := models.Repo{FullName: "owner/repo"}
+	pr := models.PullRequest{BaseRepo: baseRepo, HeadBranch: "branch", BaseBranch: "main"}
+
+	_, err := wd.Clone(logger, models.Repo{}, pr, "default")
+	Ok(t, err)
+
+	// Add a new commit to the remote.
+	runCmd(t, repoDir, "touch", "newfile")
+	runCmd(t, repoDir, "git", "add", "newfile")
+	runCmd(t, repoDir, "git", "commit", "-m", "new commit")
+	newCommit := strings.TrimSpace(runCmd(t, repoDir, "git", "rev-parse", "HEAD"))
+
+	// Force a re-clone so the cache is updated.
+	err = wd.Delete(logger, baseRepo, pr)
+	Ok(t, err)
+	_, err = wd.Clone(logger, models.Repo{}, pr, "default")
+	Ok(t, err)
+
+	// Verify the cache has the new commit.
+	cacheDir := filepath.Join(dataDir, "cache", "owner", "repo.git")
+	cachedCommit := strings.TrimSpace(runCmd(t, cacheDir, "git", "rev-parse", newCommit+"^{commit}"))
+	Equals(t, newCommit, cachedCommit)
+}
+
 func initRepo(t *testing.T) string {
 	repoDir := t.TempDir()
 	runCmd(t, repoDir, "git", "init", "--initial-branch=main")

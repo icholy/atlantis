@@ -134,6 +134,7 @@ type UserConfig struct {
 	WebBasicAuth               bool            `mapstructure:"web-basic-auth"`
 	WebUsername                string          `mapstructure:"web-username"`
 	WebPassword                string          `mapstructure:"web-password"`
+	UseGitCloneCache           bool            `mapstructure:"use-git-clone-cache"`
 	WriteGitCreds              bool            `mapstructure:"write-git-creds"`
 	WebsocketCheckOrigin       bool            `mapstructure:"websocket-check-origin"`
 	UseTFPluginCache           bool            `mapstructure:"use-tf-plugin-cache"`
